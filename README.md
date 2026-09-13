@@ -33,7 +33,7 @@
 
 - 系统通过 Seed 预置演示数据。
 - **登录**：管理员端需先登录。默认账号：`admin` / `admin123`（首次登录会自动初始化密码）。
-- **管理员-检查上传**：登录后打开 `/admin`，选择员工、上传问题图片（每张显示 key #1、#2… 与检查项、扣分值）、可删除单张（删除后序号自动连续）、保存后获得整改链接与二维码。
+- **管理员-检查上传**：登录后打开 `/admin`，选择员工、上传问题图片，并为每张图片填写**检查项名称**与**扣分值**（也可从常用检查项一键填充）；扣分值为空或不是数字时无法保存。保存后每条记录以醒目徽章（名称 + 红底扣分）展示，员工整改页与汇总看板使用同一个徽章；每张图片显示 key #1、#2…，可删除单张（删除后序号自动连续），保存后获得整改链接与二维码。
 - **员工管理**：登录后打开 `/employees`，查看每名员工的 ID、token、整改链接与二维码（可点击「生成/刷新二维码」）。
 - **员工端**：通过链接 `http://localhost:3000/fix?token=emp-token-001` 进入（或扫码），无需登录，查看待整改项（图片对按 #key 从小到大排序）并上传整改图。
 - **汇总看板**：登录后打开 `/summary`，查看各员工整改进度与对比图；问题图与整改图成对展示，同一徽章（检查项+分值）共用。
@@ -53,6 +53,14 @@ docker exec -i <mysql_container_name> mysql -uroot -proot hygiene_audit < backen
 ```
 
 脚本会为 `records.check_date` 赋值：优先取 `created_at` 的日期部分，缺失时使用当前日期。
+
+若需要支持管理员自由填写检查项名称与扣分值（`records.item_id` 允许为空、`item_score_snapshot` 支持小数），可执行：
+
+```bash
+docker exec -i <mysql_container_name> mysql -uroot -proot hygiene_audit < backend/database/migrate_custom_check_items.sql
+```
+
+脚本可重复执行；全新数据库无需手动执行，`init.sql` 已包含最新结构。
 
 ## Docker 说明
 

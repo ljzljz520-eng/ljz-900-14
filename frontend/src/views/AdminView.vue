@@ -2,7 +2,7 @@
   <div class="admin-page">
     <header class="page-header">
       <h1 class="page-title">检查上传</h1>
-      <p class="page-desc">选择员工、上传问题图片并关联检查项，key 序号连续、删除后自动重排，生成整改链接与二维码</p>
+      <p class="page-desc">选择员工、上传问题图片并填写检查项名称与扣分值（醒目徽章三端一致），key 序号连续、删除后自动重排，生成整改链接与二维码</p>
     </header>
 
     <section v-loading="loading" class="admin-section">
@@ -33,9 +33,9 @@
           <span class="card-icon existing">
             <el-icon><Picture /></el-icon>
           </span>
-          <h2 class="card-title">已有问题图片（#key + 检查项 + 扣分）</h2>
+          <h2 class="card-title">已有问题图片（#key + 检查项徽章）</h2>
         </div>
-        <p class="card-hint-inline">序号 #1、#2… 横向排列可换行；删除某张后序号自动连续，无跳跃。</p>
+        <p class="card-hint-inline">序号 #1、#2… 横向排列可换行；删除某张后序号自动连续，无跳跃。徽章与员工整改页、汇总页完全一致。</p>
         <div class="key-grid">
           <div
             v-for="r in existingRecords"
@@ -47,8 +47,12 @@
               <img :src="imageUrl(r.issue_image)" alt="问题图" @error="(e) => (e.target.style.display = 'none')" />
             </div>
             <div class="key-meta">
-              <span class="key-item-name">{{ r.item_name_snapshot || r.item?.name }}</span>
-              <span class="key-score">-{{ (r.item_score_snapshot ?? r.item?.score) }}分</span>
+              <InspectionBadge
+                :name="r.item_name_snapshot || r.item?.name"
+                :score="r.item_score_snapshot ?? r.item?.score"
+                size="sm"
+                theme="light"
+              />
             </div>
             <el-button type="danger" text size="small" class="key-delete" @click="deleteRecord(r.id)">
               <el-icon><Delete /></el-icon> 删除
@@ -85,33 +89,79 @@
             </div>
           </el-upload>
         </div>
-        <p class="card-hint">每张图片需选择对应检查项，保存后 key 自增连续、并生成整改链接与二维码</p>
+        <p class="card-hint">每张图片需填写检查项名称与扣分值，保存后 key 自增连续、并生成整改链接与二维码</p>
       </div>
 
-      <!-- 待保存的新图片：显示临时 key #n -->
+      <!-- 待保存的新图片：显示临时 key #n，填写检查项名称与扣分值 -->
       <div v-if="pendingItems.length" class="card">
         <div class="card-header">
           <span class="card-icon">
             <el-icon><List /></el-icon>
           </span>
-          <h2 class="card-title">为每张图片选择检查项（保存后序号为 #{{ nextKey }}～#{{ nextKey + pendingItems.length - 1 }}）</h2>
+          <h2 class="card-title">为每张图片填写检查项（保存后序号为 #{{ nextKey }}～#{{ nextKey + pendingItems.length - 1 }}）</h2>
         </div>
+        <p class="card-hint-inline">从常用检查项选择可自动填充，也可直接手动填写；扣分值必须为非空、非负数字，否则无法保存。</p>
         <div class="pending-grid">
           <div
             v-for="(item, idx) in pendingItems"
             :key="item.uid"
             class="pending-item"
+            :class="{ 'is-error': showErrors && (itemNameError(item) || itemScoreError(item)) }"
           >
             <span class="pending-key-badge">#{{ nextKey + idx }}</span>
             <div class="pending-preview">
               <img v-if="item.url" :src="item.url" alt="预览" />
             </div>
-            <el-select v-model="item.itemId" placeholder="选择检查项" class="pending-select">
-              <el-option v-for="i in inspectionItems" :key="i.id" :label="`${i.name} (-${i.score}分)`" :value="i.id">
-                <span>{{ i.name }}</span>
-                <el-tag type="danger" size="small" class="ml-2">-{{ i.score }}分</el-tag>
-              </el-option>
-            </el-select>
+
+            <div class="pending-form">
+              <el-select
+                :model-value="item.presetId"
+                placeholder="常用检查项（选填，自动填充）"
+                filterable
+                clearable
+                class="pending-preset"
+                @change="(val) => applyPreset(item, val)"
+              >
+                <el-option v-for="i in inspectionItems" :key="i.id" :label="`${i.name} (-${i.score}分)`" :value="i.id">
+                  <span>{{ i.name }}</span>
+                  <span class="preset-score">-{{ i.score }}分</span>
+                </el-option>
+              </el-select>
+
+              <el-input
+                v-model="item.name"
+                placeholder="检查项名称（必填）"
+                class="pending-name"
+                :class="{ 'input-error': showErrors && itemNameError(item) }"
+                maxlength="64"
+                clearable
+                @input="item.presetId = null"
+              />
+
+              <el-input
+                v-model="item.score"
+                placeholder="扣分值（必填）"
+                class="pending-score"
+                :class="{ 'input-error': showErrors && itemScoreError(item) }"
+                inputmode="numeric"
+                @input="item.presetId = null"
+              >
+                <template #prepend>扣</template>
+                <template #append>分</template>
+              </el-input>
+
+              <div class="pending-badge-row">
+                <InspectionBadge
+                  :name="item.name"
+                  :score="item.score"
+                  size="sm"
+                  theme="light"
+                />
+              </div>
+              <p v-if="showErrors && (itemNameError(item) || itemScoreError(item))" class="pending-error">
+                {{ itemNameError(item) || itemScoreError(item) }}
+              </p>
+            </div>
           </div>
         </div>
         <el-button type="primary" size="large" :loading="saving" class="save-btn" @click="saveRecords">
@@ -155,6 +205,7 @@ import { ref, watch, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, User, PictureFilled, List, Check, CircleCheckFilled, Picture, Delete } from '@element-plus/icons-vue'
 import { api, apiBase } from '@/api/request'
+import InspectionBadge from '@/components/InspectionBadge.vue'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -168,6 +219,8 @@ const resultLink = ref('')
 const resultQrUrl = ref('')
 const previewVisible = ref(false)
 const previewUrl = ref('')
+// 点击保存后置为 true，用于展示每张图片的填写错误
+const showErrors = ref(false)
 
 const nextKey = computed(() => {
   if (existingRecords.value.length === 0) return 1
@@ -175,17 +228,53 @@ const nextKey = computed(() => {
   return max + 1
 })
 
+const itemMap = computed(() => {
+  const m = new Map()
+  inspectionItems.value.forEach((i) => m.set(i.id, i))
+  return m
+})
+
 const pendingItems = ref([])
 function syncPendingItems() {
-  const prev = new Map(pendingItems.value.map((p) => [p.uid, p.itemId]))
-  pendingItems.value = fileList.value.map((f) => ({
-    uid: f.uid,
-    url: f.raw ? URL.createObjectURL(f.raw) : null,
-    itemId: prev.get(f.uid) ?? null,
-    raw: f.raw,
-  }))
+  const prev = new Map(pendingItems.value.map((p) => [p.uid, p]))
+  pendingItems.value = fileList.value.map((f) => {
+    const old = prev.get(f.uid)
+    return {
+      uid: f.uid,
+      url: f.raw ? URL.createObjectURL(f.raw) : null,
+      raw: f.raw,
+      presetId: old?.presetId ?? null,
+      name: old?.name ?? '',
+      score: old?.score ?? '',
+    }
+  })
 }
 watch(fileList, syncPendingItems, { deep: true })
+
+// 选择常用检查项：自动填充名称与扣分值（填充后仍可手动修改）
+function applyPreset(item, id) {
+  if (!id) {
+    item.presetId = null
+    return
+  }
+  const preset = itemMap.value.get(id)
+  if (!preset) return
+  item.presetId = id
+  item.name = preset.name
+  item.score = String(preset.score)
+}
+
+function itemNameError(item) {
+  if (!String(item.name || '').trim()) return '请填写检查项名称'
+  return ''
+}
+
+function itemScoreError(item) {
+  const raw = String(item.score ?? '').trim()
+  if (raw === '') return '扣分值不能为空'
+  if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(raw)) return '扣分值必须是不小于 0 的数字'
+  return ''
+}
 
 function formatDate(date) {
   if (!date) return ''
@@ -265,19 +354,48 @@ async function saveRecords() {
     ElMessage.warning('请选择员工')
     return
   }
-  const invalid = pendingItems.value.find((p) => !p.itemId)
-  if (invalid) {
-    ElMessage.warning('请为每张图片选择检查项')
+  if (!pendingItems.value.length) {
+    ElMessage.warning('请先上传问题图片')
     return
   }
+  // 保存前校验：名称必填、扣分值必须为非空非负数字
+  showErrors.value = true
+  const badName = pendingItems.value.find((p) => itemNameError(p))
+  if (badName) {
+    ElMessage.warning('请为每张图片填写检查项名称')
+    return
+  }
+  const badScore = pendingItems.value.find((p) => itemScoreError(p))
+  if (badScore) {
+    const reason = itemScoreError(badScore)
+    ElMessage.warning(`扣分值无效：${reason}`)
+    return
+  }
+  showErrors.value = false
   saving.value = true
   try {
     const uploaded = []
     for (const item of pendingItems.value) {
       const res = await api.uploadImage(item.raw)
-      if (res?.path) uploaded.push({ item_id: item.itemId, issue_image: res.path })
+      if (res?.path) {
+        // 与预设名称+分值完全一致才关联 item_id；手动修改过的按自定义检查项保存
+        const preset = item.presetId ? itemMap.value.get(item.presetId) : null
+        const sameAsPreset = preset
+          && preset.name === String(item.name).trim()
+          && String(preset.score) === String(item.score).trim()
+        uploaded.push({
+          item_id: sameAsPreset ? item.presetId : 0,
+          item_name: String(item.name).trim(),
+          item_score: Number(item.score),
+          issue_image: res.path,
+        })
+      }
     }
     const baseUrl = typeof window !== 'undefined' ? window.location.origin + '/fix' : 'http://localhost:3000/fix'
+    if (!uploaded.length) {
+      ElMessage.error('图片上传失败，请重试')
+      return
+    }
     const saved = await api.createRecords({
       user_id: selectedUserId.value,
       check_date: formatDate(selectedDate.value),
@@ -295,6 +413,7 @@ async function saveRecords() {
       resultQrUrl.value = qrData?.qr_code_url || ''
     }
     fileList.value = []
+    showErrors.value = false
     ElMessage.success('已保存并生成链接与二维码')
   } catch (_) {
     ElMessage.error('保存失败')
@@ -394,7 +513,7 @@ loadItems()
 
 .key-tile {
   position: relative;
-  width: 140px;
+  width: 168px;
   background: #f8fafc;
   border-radius: 12px;
   overflow: hidden;
@@ -433,28 +552,18 @@ loadItems()
 }
 
 .key-meta {
-  padding: 8px 10px;
+  padding: 10px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 4px;
 }
 
-.key-item-name {
-  font-size: 12px;
-  color: #475569;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.key-meta :deep(.ibadge) {
+  max-width: 100%;
 }
 
-.key-score {
-  font-size: 12px;
-  font-weight: 600;
-  color: #ef4444;
-  flex-shrink: 0;
+.key-meta :deep(.ibadge__name) {
+  max-width: 96px;
 }
 
 .key-delete {
@@ -586,7 +695,7 @@ loadItems()
 
 .pending-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -597,11 +706,17 @@ loadItems()
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #e2e8f0;
-  transition: box-shadow 0.2s;
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .pending-item:hover {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+}
+
+/* 有填写错误时卡片红色描边，扣分值问题一眼可见 */
+.pending-item.is-error {
+  border-color: #fca5a5;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.12);
 }
 
 .pending-preview {
@@ -616,9 +731,49 @@ loadItems()
   object-fit: cover;
 }
 
-.pending-select {
+.pending-form {
   padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pending-preset {
   width: 100%;
+}
+
+.preset-score {
+  float: right;
+  color: #ef4444;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.pending-badge-row {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.pending-badge-row :deep(.ibadge__name) {
+  max-width: 130px;
+}
+
+.pending-error {
+  margin: 0;
+  font-size: 12px;
+  color: #dc2626;
+  line-height: 1.4;
+}
+
+:deep(.el-input.input-error .el-input__wrapper),
+:deep(.el-input-number.input-error .el-input__wrapper) {
+  box-shadow: 0 0 0 1px #ef4444 inset;
+}
+
+:deep(.el-input.input-error .el-input__wrapper.is-focus),
+:deep(.el-input.input-error .el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px #dc2626 inset;
 }
 
 .save-btn {

@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS `inspection_items` (
 CREATE TABLE IF NOT EXISTS `records` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `user_id` int unsigned NOT NULL,
-  `item_id` int unsigned NOT NULL,
+  `item_id` int unsigned DEFAULT NULL,
   `item_name_snapshot` varchar(64) DEFAULT NULL,
-  `item_score_snapshot` int DEFAULT NULL,
+  `item_score_snapshot` decimal(6,2) DEFAULT NULL,
   `sequence_key` int unsigned NOT NULL,
   `issue_image` varchar(255) NOT NULL,
   `fix_image` varchar(255) DEFAULT NULL,

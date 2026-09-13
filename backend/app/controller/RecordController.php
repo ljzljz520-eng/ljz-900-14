@@ -8,6 +8,7 @@ use app\service\QrService;
 use app\service\RecordSequenceService;
 use think\facade\Log;
 use think\facade\Request;
+use think\facade\Db;
 use think\Response;
 class RecordController
 {
@@ -77,7 +78,7 @@ class RecordController
     {
         try {
             $userId = (int) Request::param('user_id');
-            $items = Request::param('items'); // [{ item_id, issue_image }]
+            $items = Request::param('items'); // [{ item_id?, item_name?, item_score?, issue_image }]
             $baseUrl = trim((string) Request::param('base_url', ''));
             if (!$userId || !is_array($items) || empty($items)) {
                 return api_json(['code' => 400, 'message' => '参数错误', 'data' => null]);
@@ -86,14 +87,12 @@ class RecordController
             if (!$user) {
                 return api_json(['code' => 404, 'message' => '用户不存在', 'data' => null]);
             }
-            $checkDate = (string) Request::param('check_date') ?: date('Y-m-d');
-            $startKey = $this->seq()->getNextSequenceKey($userId, $checkDate);
 
-            // 预取检查项，用于写入快照，避免后续修改 inspection_items 造成历史漂移
+            // 先收集可能引用的检查项 ID（item_id 现在可为 0/空：允许管理员自由填写名称与扣分值）
             $itemIds = [];
             foreach ($items as $item) {
                 $itemId = (int) ($item['item_id'] ?? 0);
-                if ($itemId) {
+                if ($itemId > 0) {
                     $itemIds[] = $itemId;
                 }
             }
@@ -105,31 +104,79 @@ class RecordController
                 }
             }
 
-            $created = [];
-            foreach ($items as $i => $item) {
-                $itemId = (int) ($item['item_id'] ?? 0);
-                $issueImage = (string) ($item['issue_image'] ?? '');
-                if (!$itemId || !$issueImage) {
+            // 逐条校验并解析出待写入数据：
+            // - item_name 必填（为空但传了有效 item_id 时用预设名称兜底）
+            // - item_score 必填且必须是 >=0 的数字，为空或非数字整批拒绝，不允许保存
+            $parsed = [];
+            foreach ($items as $index => $item) {
+                $issueImage = trim((string) ($item['issue_image'] ?? ''));
+                if ($issueImage === '') {
+                    // 缺图片的条目直接跳过（兼容历史行为）
                     continue;
                 }
-                $snapName = null;
-                $snapScore = null;
-                if (isset($itemMap[$itemId])) {
-                    $snapName = (string) $itemMap[$itemId]->name;
-                    $snapScore = (int) $itemMap[$itemId]->score;
+
+                $itemId = (int) ($item['item_id'] ?? 0);
+                if ($itemId > 0 && !isset($itemMap[$itemId])) {
+                    return api_json(['code' => 400, 'message' => '第' . ($index + 1) . '张图片引用的检查项不存在', 'data' => null]);
                 }
-                $record = Record::create([
-                    'user_id'      => $userId,
-                    'item_id'      => $itemId,
-                    'item_name_snapshot'  => $snapName,
-                    'item_score_snapshot' => $snapScore,
-                    'sequence_key' => $startKey + $i,
-                    'issue_image'  => $issueImage,
-                    'status'       => 'pending',
-                    'check_date'   => $checkDate,
-                ]);
-                $created[] = Record::with(['item'])->find($record->id)->toArray();
+                $preset = $itemId > 0 ? $itemMap[$itemId] : null;
+
+                $name = trim((string) ($item['item_name'] ?? ''));
+                if ($name === '') {
+                    $name = $preset ? (string) $preset->name : '';
+                }
+                if ($name === '') {
+                    return api_json(['code' => 400, 'message' => '第' . ($index + 1) . '张图片未填写检查项名称', 'data' => null]);
+                }
+
+                $scoreRaw = $item['item_score'] ?? null;
+                if ($scoreRaw === null || (is_string($scoreRaw) && trim($scoreRaw) === '')) {
+                    $scoreRaw = $preset?->score;
+                }
+                if ($scoreRaw === null || (is_string($scoreRaw) && trim((string) $scoreRaw) === '')) {
+                    return api_json(['code' => 400, 'message' => '第' . ($index + 1) . '张图片的扣分值不能为空', 'data' => null]);
+                }
+                if (!is_numeric($scoreRaw) || (float) $scoreRaw < 0) {
+                    return api_json(['code' => 400, 'message' => '第' . ($index + 1) . '张图片的扣分值必须是不小于 0 的数字', 'data' => null]);
+                }
+                $score = (float) $scoreRaw;
+                if ($score > 9999) {
+                    return api_json(['code' => 400, 'message' => '第' . ($index + 1) . '张图片的扣分值过大', 'data' => null]);
+                }
+
+                $parsed[] = [
+                    'item_id'     => $itemId > 0 ? $itemId : null,
+                    'name'        => mb_substr($name, 0, 64),
+                    'score'       => $score,
+                    'issue_image' => $issueImage,
+                ];
             }
+
+            if (empty($parsed)) {
+                return api_json(['code' => 400, 'message' => '缺少有效的图片数据', 'data' => null]);
+            }
+
+            $checkDate = (string) Request::param('check_date') ?: date('Y-m-d');
+            $startKey = $this->seq()->getNextSequenceKey($userId, $checkDate);
+
+            // 全部校验通过后再写入，使用事务保证不会出现半批脏数据
+            $created = Db::transaction(function () use ($parsed, $userId, $checkDate, $startKey) {
+                $created = [];
+                foreach ($parsed as $i => $row) {
+                    $record = Record::create([
+                        'user_id'             => $userId,
+                        'item_id'             => $row['item_id'],
+                        'item_name_snapshot'  => $row['name'],
+                        'item_score_snapshot' => $row['score'],
+                        'sequence_key'        => $startKey + $i,
+                        'issue_image'         => $row['issue_image'],
+                        'status'              => 'pending',
+                        'check_date'          => $checkDate,
+                    ]);
+                    $created[] = Record::with(['item'])->find($record->id)->toArray();
+                }
+                return $created;
+            });
 
             // 可选：同一步生成“带 token 链接 + 唯一二维码”
             if ($baseUrl !== '') {

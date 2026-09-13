@@ -10,7 +10,7 @@ class Record extends Model
         'user_id'      => 'int',
         'item_id'      => 'int',
         'item_name_snapshot'  => 'string',
-        'item_score_snapshot' => 'int',
+        'item_score_snapshot' => 'float',
         'sequence_key' => 'int',
         'issue_image'  => 'string',
         'fix_image'    => 'string',
