@@ -72,6 +72,7 @@ export const api = {
   resetUserToken: (id) => request.post(`/api/users/${id}/reset-token`).then((r) => r.data?.data),
   toggleUserActive: (id) => request.post(`/api/users/${id}/toggle-active`).then((r) => r.data?.data),
   getInspectionItems: () => request.get('/api/inspection-items').then((r) => r.data?.data ?? []),
+  createInspectionItem: (data) => request.post('/api/inspection-items', data).then((r) => r.data?.data),
   getRecords: (params) => request.get('/api/records', { params }).then((r) => r.data?.data ?? []),
   // 兼容两种返回：
   // 1) 旧：data = records[]

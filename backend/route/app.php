@@ -21,6 +21,7 @@ Route::put('/api/users/:id', [UserController::class, 'update'])->middleware(Auth
 Route::post('/api/users/:id/reset-token', [UserController::class, 'resetToken'])->middleware(AuthMiddleware::class);
 Route::post('/api/users/:id/toggle-active', [UserController::class, 'toggleActive'])->middleware(AuthMiddleware::class);
 Route::get('/api/inspection-items', [InspectionItemController::class, 'index'])->middleware(AuthMiddleware::class);
+Route::post('/api/inspection-items', [InspectionItemController::class, 'create'])->middleware(AuthMiddleware::class);
 // 记录查询需支持员工端通过 token 访问，因此不强制登录
 Route::get('/api/records', [RecordController::class, 'index']);
 Route::post('/api/records', [RecordController::class, 'save'])->middleware(AuthMiddleware::class);

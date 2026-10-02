@@ -42,8 +42,10 @@
           >
             <div class="record-meta">
               <span class="record-seq">#{{ r.sequence_key }}</span>
-              <span class="badge-name">{{ r.item_name_snapshot || r.item?.name }}</span>
-              <span class="badge-score">-{{ (r.item_score_snapshot ?? r.item?.score) }}分</span>
+              <ScoreBadge
+                :name="r.item_name_snapshot || r.item?.name"
+                :score="r.item_score_snapshot ?? r.item?.score"
+              />
               <el-tag v-if="r.status === 'completed'" type="success" size="small" class="record-tag">已完成</el-tag>
               <el-tag v-else type="warning" size="small" class="record-tag">待整改</el-tag>
             </div>
@@ -83,6 +85,7 @@
 import { ref, onMounted } from 'vue'
 import { CircleCheck, DataAnalysis } from '@element-plus/icons-vue'
 import { api, apiBase } from '@/api/request'
+import ScoreBadge from '@/components/ScoreBadge.vue'
 
 const loading = ref(true)
 const summary = ref([])
@@ -288,19 +291,6 @@ onMounted(loadSummary)
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
-}
-
-.badge-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
-}
-
-.badge-score {
-  font-size: 13px;
-  font-weight: 600;
-  color: #ef4444;
-  margin-left: 4px;
 }
 
 .record-pair-desc {

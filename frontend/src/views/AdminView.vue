@@ -47,8 +47,11 @@
               <img :src="imageUrl(r.issue_image)" alt="问题图" @error="(e) => (e.target.style.display = 'none')" />
             </div>
             <div class="key-meta">
-              <span class="key-item-name">{{ r.item_name_snapshot || r.item?.name }}</span>
-              <span class="key-score">-{{ (r.item_score_snapshot ?? r.item?.score) }}分</span>
+              <ScoreBadge
+                :name="r.item_name_snapshot || r.item?.name"
+                :score="r.item_score_snapshot ?? r.item?.score"
+                size="sm"
+              />
             </div>
             <el-button type="danger" text size="small" class="key-delete" @click="deleteRecord(r.id)">
               <el-icon><Delete /></el-icon> 删除
@@ -106,12 +109,35 @@
             <div class="pending-preview">
               <img v-if="item.url" :src="item.url" alt="预览" />
             </div>
-            <el-select v-model="item.itemId" placeholder="选择检查项" class="pending-select">
-              <el-option v-for="i in inspectionItems" :key="i.id" :label="`${i.name} (-${i.score}分)`" :value="i.id">
-                <span>{{ i.name }}</span>
-                <el-tag type="danger" size="small" class="ml-2">-{{ i.score }}分</el-tag>
-              </el-option>
-            </el-select>
+            <div class="pending-fields">
+              <el-select v-model="item.itemId" placeholder="选择检查项" class="pending-select">
+                <el-option v-for="i in inspectionItems" :key="i.id" :label="`${i.name}（-${i.score}分）`" :value="i.id">
+                  <ScoreBadge :name="i.name" :score="i.score" size="sm" />
+                </el-option>
+                <el-option label="＋ 新建检查项…" :value="NEW_ITEM">
+                  <span class="new-item-option">＋ 新建检查项…</span>
+                </el-option>
+              </el-select>
+              <template v-if="item.itemId === NEW_ITEM">
+                <el-input
+                  v-model="item.newName"
+                  placeholder="检查项名称，如：地面清洁"
+                  class="pending-input"
+                  :class="{ 'is-invalid': item.nameError }"
+                  maxlength="64"
+                  @input="item.nameError = false"
+                />
+                <el-input
+                  v-model="item.newScore"
+                  placeholder="扣分值（必填，须为数字）"
+                  class="pending-input"
+                  :class="{ 'is-invalid': item.scoreError }"
+                  inputmode="decimal"
+                  @input="item.scoreError = false"
+                />
+                <p class="new-item-hint">扣分值不能为空且必须是数字，否则无法保存</p>
+              </template>
+            </div>
           </div>
         </div>
         <el-button type="primary" size="large" :loading="saving" class="save-btn" @click="saveRecords">
@@ -155,6 +181,10 @@ import { ref, watch, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, User, PictureFilled, List, Check, CircleCheckFilled, Picture, Delete } from '@element-plus/icons-vue'
 import { api, apiBase } from '@/api/request'
+import ScoreBadge from '@/components/ScoreBadge.vue'
+
+// 待保存图片选择“新建检查项”时的占位值
+const NEW_ITEM = '__new__'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -177,15 +207,30 @@ const nextKey = computed(() => {
 
 const pendingItems = ref([])
 function syncPendingItems() {
-  const prev = new Map(pendingItems.value.map((p) => [p.uid, p.itemId]))
-  pendingItems.value = fileList.value.map((f) => ({
-    uid: f.uid,
-    url: f.raw ? URL.createObjectURL(f.raw) : null,
-    itemId: prev.get(f.uid) ?? null,
-    raw: f.raw,
-  }))
+  const prev = new Map(pendingItems.value.map((p) => [p.uid, p]))
+  pendingItems.value = fileList.value.map((f) => {
+    const old = prev.get(f.uid)
+    return {
+      uid: f.uid,
+      url: f.raw ? URL.createObjectURL(f.raw) : null,
+      itemId: old?.itemId ?? null,
+      newName: old?.newName ?? '',
+      newScore: old?.newScore ?? '',
+      nameError: false,
+      scoreError: false,
+      raw: f.raw,
+    }
+  })
 }
 watch(fileList, syncPendingItems, { deep: true })
+
+// 扣分值校验：为空或不是数字时不允许保存
+function isValidScore(v) {
+  if (v === null || v === undefined) return false
+  const s = String(v).trim()
+  if (s === '') return false
+  return Number.isFinite(Number(s))
+}
 
 function formatDate(date) {
   if (!date) return ''
@@ -265,13 +310,41 @@ async function saveRecords() {
     ElMessage.warning('请选择员工')
     return
   }
-  const invalid = pendingItems.value.find((p) => !p.itemId)
-  if (invalid) {
-    ElMessage.warning('请为每张图片选择检查项')
+  // 校验：每张图都要选检查项；新建项的名称必填，扣分值为空或不是数字时不允许保存
+  let firstError = ''
+  for (const p of pendingItems.value) {
+    p.nameError = false
+    p.scoreError = false
+    if (!p.itemId) {
+      firstError = firstError || '请为每张图片选择检查项'
+      continue
+    }
+    if (p.itemId === NEW_ITEM) {
+      if (!p.newName || !p.newName.trim()) {
+        p.nameError = true
+        firstError = firstError || '新检查项需要填写名称'
+      }
+      if (!isValidScore(p.newScore)) {
+        p.scoreError = true
+        firstError = firstError || '扣分值不能为空且必须是数字'
+      }
+    }
+  }
+  if (firstError) {
+    ElMessage.warning(firstError)
     return
   }
   saving.value = true
   try {
+    // 先创建“新建检查项”拿到 id，再走原有上传流程
+    for (const p of pendingItems.value) {
+      if (p.itemId === NEW_ITEM) {
+        const created = await api.createInspectionItem({ name: p.newName.trim(), score: Number(p.newScore) })
+        if (!created?.id) throw new Error('创建检查项失败')
+        p.itemId = created.id
+      }
+    }
+    await loadItems()
     const uploaded = []
     for (const item of pendingItems.value) {
       const res = await api.uploadImage(item.raw)
@@ -435,26 +508,7 @@ loadItems()
 .key-meta {
   padding: 8px 10px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.key-item-name {
-  font-size: 12px;
-  color: #475569;
-  flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.key-score {
-  font-size: 12px;
-  font-weight: 600;
-  color: #ef4444;
-  flex-shrink: 0;
 }
 
 .key-delete {
@@ -616,9 +670,35 @@ loadItems()
   object-fit: cover;
 }
 
-.pending-select {
+.pending-fields {
   padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pending-select {
   width: 100%;
+}
+
+.pending-input {
+  width: 100%;
+}
+
+/* 校验失败时红框提示 */
+.pending-input.is-invalid :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #dc2626 inset;
+}
+
+.new-item-option {
+  color: #0ea5e9;
+  font-weight: 600;
+}
+
+.new-item-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: 0;
 }
 
 .save-btn {
