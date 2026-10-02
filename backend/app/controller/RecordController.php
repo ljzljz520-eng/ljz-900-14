@@ -77,7 +77,7 @@ class RecordController
     {
         try {
             $userId = (int) Request::param('user_id');
-            $items = Request::param('items'); // [{ item_id, issue_image }]
+            $items = Request::param('items'); // [{ item_name, item_score, issue_image }]，兼容旧的 { item_id, issue_image }
             $baseUrl = trim((string) Request::param('base_url', ''));
             if (!$userId || !is_array($items) || empty($items)) {
                 return api_json(['code' => 400, 'message' => '参数错误', 'data' => null]);
@@ -87,9 +87,8 @@ class RecordController
                 return api_json(['code' => 404, 'message' => '用户不存在', 'data' => null]);
             }
             $checkDate = (string) Request::param('check_date') ?: date('Y-m-d');
-            $startKey = $this->seq()->getNextSequenceKey($userId, $checkDate);
 
-            // 预取检查项，用于写入快照，避免后续修改 inspection_items 造成历史漂移
+            // 预取检查项目录：兼容旧前端按 item_id 提交，用于补齐名称与扣分值
             $itemIds = [];
             foreach ($items as $item) {
                 $itemId = (int) ($item['item_id'] ?? 0);
@@ -105,26 +104,69 @@ class RecordController
                 }
             }
 
-            $created = [];
+            // 第一轮：解析名称/扣分值并做校验（任一不合法则整体不允许保存）
+            $resolved = [];
             foreach ($items as $i => $item) {
+                $seqNo = $i + 1;
+                $issueImage = trim((string) ($item['issue_image'] ?? ''));
+                if ($issueImage === '') {
+                    return api_json(['code' => 400, 'message' => "第 {$seqNo} 张图片缺少问题图", 'data' => null]);
+                }
+
                 $itemId = (int) ($item['item_id'] ?? 0);
-                $issueImage = (string) ($item['issue_image'] ?? '');
-                if (!$itemId || !$issueImage) {
-                    continue;
+                $name = array_key_exists('item_name', $item) ? trim((string) $item['item_name']) : '';
+                $scoreRaw = $item['item_score'] ?? null;
+                if ($scoreRaw === null) {
+                    $scoreRaw = '';
                 }
-                $snapName = null;
-                $snapScore = null;
-                if (isset($itemMap[$itemId])) {
-                    $snapName = (string) $itemMap[$itemId]->name;
-                    $snapScore = (int) $itemMap[$itemId]->score;
+
+                if ($itemId) {
+                    if (!isset($itemMap[$itemId])) {
+                        return api_json(['code' => 400, 'message' => "第 {$seqNo} 张图片选择的检查项不存在", 'data' => null]);
+                    }
+                    if ($name === '') {
+                        $name = (string) $itemMap[$itemId]->name;
+                    }
+                    if (is_string($scoreRaw) && trim($scoreRaw) === '') {
+                        $scoreRaw = $itemMap[$itemId]->score;
+                    }
                 }
+
+                if ($name === '') {
+                    return api_json(['code' => 400, 'message' => "第 {$seqNo} 张图片未填写检查项名称", 'data' => null]);
+                }
+                if (mb_strlen($name) > 64) {
+                    return api_json(['code' => 400, 'message' => "第 {$seqNo} 张图片检查项名称不能超过 64 个字符", 'data' => null]);
+                }
+                // 扣分值必填且必须是数字（非负、有限）
+                if (!is_numeric($scoreRaw)) {
+                    return api_json(['code' => 400, 'message' => "第 {$seqNo} 张图片扣分值必须是数字", 'data' => null]);
+                }
+                $score = (float) $scoreRaw;
+                if (!is_finite($score) || $score < 0) {
+                    return api_json(['code' => 400, 'message' => "第 {$seqNo} 张图片扣分值必须是不小于 0 的数字", 'data' => null]);
+                }
+                $score = round($score, 2);
+
+                $resolved[] = [
+                    'item_id'     => $itemId ?: null,
+                    'name'        => $name,
+                    'score'       => $score,
+                    'issue_image' => $issueImage,
+                ];
+            }
+
+            // 第二轮：全部合法后才落库，序号从当天续号开始
+            $startKey = $this->seq()->getNextSequenceKey($userId, $checkDate);
+            $created = [];
+            foreach ($resolved as $i => $row) {
                 $record = Record::create([
                     'user_id'      => $userId,
-                    'item_id'      => $itemId,
-                    'item_name_snapshot'  => $snapName,
-                    'item_score_snapshot' => $snapScore,
+                    'item_id'      => $row['item_id'],
+                    'item_name_snapshot'  => $row['name'],
+                    'item_score_snapshot' => $row['score'],
                     'sequence_key' => $startKey + $i,
-                    'issue_image'  => $issueImage,
+                    'issue_image'  => $row['issue_image'],
                     'status'       => 'pending',
                     'check_date'   => $checkDate,
                 ]);

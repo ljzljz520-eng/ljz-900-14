@@ -59,8 +59,11 @@
             >
               <div class="fix-card-meta">
                 <span class="fix-seq" :title="'序号 #' + r.sequence_key">#{{ r.sequence_key }}</span>
-                <span class="fix-badge-name">{{ r.item_name_snapshot || r.item?.name }}</span>
-                <span class="fix-badge-score">-{{ (r.item_score_snapshot ?? r.item?.score) }}分</span>
+                <InspectionBadge
+                  variant="dark"
+                  :name="r.item_name_snapshot || r.item?.name"
+                  :score="r.item_score_snapshot ?? r.item?.score ?? 0"
+                />
               </div>
               <div class="fix-card-images">
                 <div class="fix-img-box">
@@ -113,6 +116,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, Loading, Link } from '@element-plus/icons-vue'
 import { api, apiBase } from '@/api/request'
+import InspectionBadge from '@/components/inspection/InspectionBadge.vue'
 
 const route = useRoute()
 const loading = ref(true)
@@ -339,6 +343,7 @@ watch(onlyPending, loadRecords)
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 
 .fix-seq {
@@ -348,18 +353,6 @@ watch(onlyPending, loadRecords)
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
-}
-
-.fix-badge-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-
-.fix-badge-score {
-  font-size: 14px;
-  font-weight: 600;
-  color: #f87171;
 }
 
 .fix-card-images {

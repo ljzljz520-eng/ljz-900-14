@@ -2,7 +2,7 @@
   <div class="admin-page">
     <header class="page-header">
       <h1 class="page-title">检查上传</h1>
-      <p class="page-desc">选择员工、上传问题图片并关联检查项，key 序号连续、删除后自动重排，生成整改链接与二维码</p>
+      <p class="page-desc">选择员工、上传问题图片并填写检查项名称与扣分值，key 序号连续、删除后自动重排，生成整改链接与二维码；徽章在员工整改页与老板汇总页一致展示</p>
     </header>
 
     <section v-loading="loading" class="admin-section">
@@ -33,9 +33,9 @@
           <span class="card-icon existing">
             <el-icon><Picture /></el-icon>
           </span>
-          <h2 class="card-title">已有问题图片（#key + 检查项 + 扣分）</h2>
+          <h2 class="card-title">已有问题图片（#key + 检查项徽章）</h2>
         </div>
-        <p class="card-hint-inline">序号 #1、#2… 横向排列可换行；删除某张后序号自动连续，无跳跃。</p>
+        <p class="card-hint-inline">序号 #1、#2… 横向排列可换行；徽章为检查项名称 + 扣分值，删除某张后序号自动连续、无跳跃。</p>
         <div class="key-grid">
           <div
             v-for="r in existingRecords"
@@ -46,13 +46,16 @@
             <div class="key-preview">
               <img :src="imageUrl(r.issue_image)" alt="问题图" @error="(e) => (e.target.style.display = 'none')" />
             </div>
-            <div class="key-meta">
-              <span class="key-item-name">{{ r.item_name_snapshot || r.item?.name }}</span>
-              <span class="key-score">-{{ (r.item_score_snapshot ?? r.item?.score) }}分</span>
+            <div class="key-footer">
+              <InspectionBadge
+                size="small"
+                :name="r.item_name_snapshot || r.item?.name"
+                :score="r.item_score_snapshot ?? r.item?.score ?? 0"
+              />
+              <el-button type="danger" text size="small" class="key-delete" @click="deleteRecord(r.id)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </div>
-            <el-button type="danger" text size="small" class="key-delete" @click="deleteRecord(r.id)">
-              <el-icon><Delete /></el-icon> 删除
-            </el-button>
           </div>
         </div>
       </div>
@@ -85,33 +88,80 @@
             </div>
           </el-upload>
         </div>
-        <p class="card-hint">每张图片需选择对应检查项，保存后 key 自增连续、并生成整改链接与二维码</p>
+        <p class="card-hint">每张图片需填写「检查项名称」与「扣分值」（必填、数字），保存后 key 自增连续、并生成整改链接与二维码；同一徽章会展示在员工整改页与老板汇总页。</p>
       </div>
 
-      <!-- 待保存的新图片：显示临时 key #n -->
+      <!-- 待保存的新图片：显示临时 key #n，手动填写检查项名称与扣分值 -->
       <div v-if="pendingItems.length" class="card">
         <div class="card-header">
           <span class="card-icon">
             <el-icon><List /></el-icon>
           </span>
-          <h2 class="card-title">为每张图片选择检查项（保存后序号为 #{{ nextKey }}～#{{ nextKey + pendingItems.length - 1 }}）</h2>
+          <h2 class="card-title">填写检查项与扣分值（保存后序号为 #{{ nextKey }}～#{{ nextKey + pendingItems.length - 1 }}）</h2>
         </div>
         <div class="pending-grid">
           <div
             v-for="(item, idx) in pendingItems"
             :key="item.uid"
             class="pending-item"
+            :class="{ 'pending-item--invalid': showErrors && !isPendingValid(item) }"
           >
             <span class="pending-key-badge">#{{ nextKey + idx }}</span>
             <div class="pending-preview">
               <img v-if="item.url" :src="item.url" alt="预览" />
             </div>
-            <el-select v-model="item.itemId" placeholder="选择检查项" class="pending-select">
-              <el-option v-for="i in inspectionItems" :key="i.id" :label="`${i.name} (-${i.score}分)`" :value="i.id">
-                <span>{{ i.name }}</span>
-                <el-tag type="danger" size="small" class="ml-2">-{{ i.score }}分</el-tag>
-              </el-option>
-            </el-select>
+
+            <div class="pending-form">
+              <div class="pending-field">
+                <label class="field-label">检查项名称</label>
+                <el-input
+                  v-model="item.itemName"
+                  placeholder="如：地面清洁"
+                  maxlength="64"
+                  size="small"
+                  clearable
+                />
+                <p v-if="showErrors && !item.itemName?.trim()" class="field-error">请填写检查项名称</p>
+              </div>
+              <div class="pending-field">
+                <label class="field-label">扣分值（数字）</label>
+                <el-input
+                  v-model="item.scoreRaw"
+                  placeholder="如：5"
+                  inputmode="decimal"
+                  size="small"
+                  class="score-input"
+                  @input="(v) => (item.scoreRaw = sanitizeScore(v))"
+                >
+                  <template #append>分</template>
+                </el-input>
+                <p v-if="showErrors && !isValidScore(item.scoreRaw)" class="field-error">扣分值不能为空，且必须是数字</p>
+              </div>
+
+              <!-- 实时徽章预览：与员工端 / 老板端为同一个组件 -->
+              <div class="pending-badge-row">
+                <InspectionBadge
+                  :name="item.itemName?.trim()"
+                  :score="item.scoreRaw"
+                />
+                <el-dropdown v-if="inspectionItems.length" trigger="click" placement="top-start" @command="(it) => applyPreset(item, it)">
+                  <el-button text size="small" class="preset-btn">
+                    常用项<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item
+                        v-for="i in inspectionItems"
+                        :key="i.id"
+                        :command="i"
+                      >
+                        {{ i.name }}（-{{ i.score }}分）
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </div>
           </div>
         </div>
         <el-button type="primary" size="large" :loading="saving" class="save-btn" @click="saveRecords">
@@ -153,8 +203,10 @@
 <script setup>
 import { ref, watch, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, User, PictureFilled, List, Check, CircleCheckFilled, Picture, Delete } from '@element-plus/icons-vue'
+import { UploadFilled, User, PictureFilled, List, Check, CircleCheckFilled, Picture, Delete, ArrowDown } from '@element-plus/icons-vue'
 import { api, apiBase } from '@/api/request'
+import InspectionBadge from '@/components/inspection/InspectionBadge.vue'
+import { isValidScore } from '@/utils/score'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -176,16 +228,43 @@ const nextKey = computed(() => {
 })
 
 const pendingItems = ref([])
+const showErrors = ref(false)
+
 function syncPendingItems() {
-  const prev = new Map(pendingItems.value.map((p) => [p.uid, p.itemId]))
-  pendingItems.value = fileList.value.map((f) => ({
-    uid: f.uid,
-    url: f.raw ? URL.createObjectURL(f.raw) : null,
-    itemId: prev.get(f.uid) ?? null,
-    raw: f.raw,
-  }))
+  const prev = new Map(pendingItems.value.map((p) => [p.uid, p]))
+  pendingItems.value = fileList.value.map((f) => {
+    const old = prev.get(f.uid)
+    return {
+      uid: f.uid,
+      url: f.raw ? URL.createObjectURL(f.raw) : null,
+      itemName: old?.itemName ?? '',
+      scoreRaw: old?.scoreRaw ?? '',
+      raw: f.raw,
+    }
+  })
 }
 watch(fileList, syncPendingItems, { deep: true })
+
+// 只允许数字与一个小数点；空字符串允许（输入中途），由保存校验拦截
+function sanitizeScore(v) {
+  let s = String(v).replace(/[^\d.]/g, '')
+  const firstDot = s.indexOf('.')
+  if (firstDot !== -1) {
+    s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
+  }
+  return s
+}
+
+function isPendingValid(p) {
+  return !!(p.itemName && p.itemName.trim() && isValidScore(p.scoreRaw))
+}
+
+// 一键填入常用检查项（来自系统预置项），填入后仍可手动修改
+function applyPreset(item, preset) {
+  item.itemName = preset.name
+  item.scoreRaw = String(preset.score ?? '')
+  showErrors.value = false
+}
 
 function formatDate(date) {
   if (!date) return ''
@@ -265,9 +344,20 @@ async function saveRecords() {
     ElMessage.warning('请选择员工')
     return
   }
-  const invalid = pendingItems.value.find((p) => !p.itemId)
-  if (invalid) {
-    ElMessage.warning('请为每张图片选择检查项')
+  if (pendingItems.value.length === 0) {
+    ElMessage.warning('请先上传问题图片')
+    return
+  }
+  // 扣分值为空或不是数字时不允许保存
+  showErrors.value = true
+  const invalidName = pendingItems.value.find((p) => !p.itemName || !p.itemName.trim())
+  if (invalidName) {
+    ElMessage.error('请为每张图片填写检查项名称')
+    return
+  }
+  const invalidScore = pendingItems.value.find((p) => !isValidScore(p.scoreRaw))
+  if (invalidScore) {
+    ElMessage.error('扣分值不能为空，且必须是数字，请检查标红的图片')
     return
   }
   saving.value = true
@@ -275,7 +365,13 @@ async function saveRecords() {
     const uploaded = []
     for (const item of pendingItems.value) {
       const res = await api.uploadImage(item.raw)
-      if (res?.path) uploaded.push({ item_id: item.itemId, issue_image: res.path })
+      if (res?.path) {
+        uploaded.push({
+          item_name: item.itemName.trim(),
+          item_score: Number(String(item.scoreRaw).trim()),
+          issue_image: res.path,
+        })
+      }
     }
     const baseUrl = typeof window !== 'undefined' ? window.location.origin + '/fix' : 'http://localhost:3000/fix'
     const saved = await api.createRecords({
@@ -295,6 +391,7 @@ async function saveRecords() {
       resultQrUrl.value = qrData?.qr_code_url || ''
     }
     fileList.value = []
+    showErrors.value = false
     ElMessage.success('已保存并生成链接与二维码')
   } catch (_) {
     ElMessage.error('保存失败')
@@ -394,13 +491,14 @@ loadItems()
 
 .key-tile {
   position: relative;
-  width: 140px;
+  width: 168px;
   background: #f8fafc;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #e2e8f0;
-  padding-bottom: 36px;
   transition: box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
 }
 
 .key-tile:hover {
@@ -411,7 +509,7 @@ loadItems()
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(14, 165, 233, 0.95);
+  background: rgba(15, 23, 42, 0.75);
   color: white;
   padding: 2px 8px;
   border-radius: 6px;
@@ -432,42 +530,31 @@ loadItems()
   object-fit: cover;
 }
 
-.key-meta {
-  padding: 8px 10px;
+.key-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 4px;
+  padding: 8px;
 }
 
-.key-item-name {
-  font-size: 12px;
-  color: #475569;
-  flex: 1;
+.key-footer .insp-badge {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1;
 }
 
-.key-score {
-  font-size: 12px;
-  font-weight: 600;
-  color: #ef4444;
-  flex-shrink: 0;
+.key-footer .insp-badge__name {
+  min-width: 0;
 }
 
 .key-delete {
-  position: absolute;
-  bottom: 6px;
-  right: 6px;
+  flex-shrink: 0;
 }
 
 .pending-key-badge {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(14, 165, 233, 0.95);
+  background: rgba(15, 23, 42, 0.75);
   color: white;
   padding: 2px 8px;
   border-radius: 6px;
@@ -586,7 +673,7 @@ loadItems()
 
 .pending-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -597,11 +684,16 @@ loadItems()
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #e2e8f0;
-  transition: box-shadow 0.2s;
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .pending-item:hover {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+}
+
+.pending-item--invalid {
+  border-color: #fca5a5;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
 }
 
 .pending-preview {
@@ -616,9 +708,53 @@ loadItems()
   object-fit: cover;
 }
 
-.pending-select {
+.pending-form {
   padding: 12px;
-  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pending-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.field-error {
+  margin: 0;
+  font-size: 12px;
+  color: #dc2626;
+  line-height: 1.3;
+}
+
+.score-input :deep(input) {
+  font-weight: 700;
+  color: #dc2626;
+}
+
+.pending-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.pending-badge-row .insp-badge {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.preset-btn {
+  flex-shrink: 0;
+  font-size: 12px;
 }
 
 .save-btn {

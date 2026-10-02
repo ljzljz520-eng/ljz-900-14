@@ -63,7 +63,7 @@ SET @sql = (
      WHERE TABLE_SCHEMA = @db
        AND TABLE_NAME = 'records'
        AND COLUMN_NAME = 'item_score_snapshot') = 0,
-    'ALTER TABLE `records` ADD COLUMN `item_score_snapshot` int DEFAULT NULL AFTER `item_name_snapshot`',
+    'ALTER TABLE `records` ADD COLUMN `item_score_snapshot` DECIMAL(6,2) DEFAULT NULL AFTER `item_name_snapshot`',
     'SELECT 1'
   )
 );

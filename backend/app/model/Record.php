@@ -10,7 +10,7 @@ class Record extends Model
         'user_id'      => 'int',
         'item_id'      => 'int',
         'item_name_snapshot'  => 'string',
-        'item_score_snapshot' => 'int',
+        'item_score_snapshot' => 'float',
         'sequence_key' => 'int',
         'issue_image'  => 'string',
         'fix_image'    => 'string',
@@ -25,5 +25,10 @@ class Record extends Model
     public function item()
     {
         return $this->belongsTo(InspectionItem::class, 'item_id', 'id');
+    }
+    // DECIMAL 列在部分驱动下会以字符串返回，统一转成数字，便于前端徽章直接展示
+    public function getItemScoreSnapshotAttr($value)
+    {
+        return $value === null ? null : (float) $value;
     }
 }

@@ -24,7 +24,7 @@ class SummaryController
                     if ($r->status === 'completed') {
                         $completed++;
                     }
-                    $totalScore += (int) ($r->item_score_snapshot ?? ($r->item->score ?? 0));
+                    $totalScore += (float) ($r->item_score_snapshot ?? ($r->item->score ?? 0));
                 }
                 $data[] = [
                     'user' => $user,
